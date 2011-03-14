@@ -399,7 +399,37 @@ class SiteLocation(Thumbnailable):
         default=False,
         verbose_name="Require Login",
         help_text="If True, comments require the user to be logged in.")
-
+    
+    #account info
+    FREE = 1
+    PLUS = 2
+    PREMIUM = 3
+    EXECUTIVE = 4
+    TRIAL = 5
+    TYPE_CHOICES = (
+        (FREE, 'Free'),
+        (PLUS, 'Plus'),
+        (PREMIUM, 'Premium'),
+        (EXECUTIVE, 'Executive'),
+        (TRIAL, 'Free trial')
+    )
+    TYPE_COSTS = {
+        FREE: 0,
+        PLUS: 15,
+        PREMIUM: 35,
+        EXECUTIVE: 75,
+        TRIAL: 0
+    }
+    TYPE_VIDEOS_LIMIT = {
+        FREE: 500,
+        PLUS: 1000,
+        PREMIUM: 5000,
+        EXECUTIVE: 25000,
+        TRIAL: 500
+    }
+    type = models.IntegerField(choices=TYPE_CHOICES, default=TRIAL)
+    pay_time = models.DateTimeField(default=datetime.datetime.now)
+    
     objects = SiteLocationManager()
 
     THUMB_SIZES = [

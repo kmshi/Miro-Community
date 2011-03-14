@@ -1,22 +1,3 @@
-<<<<<<< HEAD
-# This file is part of Miro Community.
-# Copyright (C) 2010 Participatory Culture Foundation
-# 
-# Miro Community is free software: you can redistribute it and/or modify it
-# under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or (at your
-# option) any later version.
-# 
-# Miro Community is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-# 
-# You should have received a copy of the GNU Affero General Public License
-# along with Miro Community.  If not, see <http://www.gnu.org/licenses/>.
-
-=======
->>>>>>> github/master
 
 from south.db import db
 from django.db import models
@@ -26,15 +7,21 @@ class Migration:
     
     def forwards(self, orm):
         
-        # Adding field 'Feed.avoid_frontpage'
-        db.add_column('localtv_feed', 'avoid_frontpage', orm['localtv.feed:avoid_frontpage'])
+        # Adding field 'SiteLocation.type'
+        db.add_column('localtv_sitelocation', 'type', orm['localtv.sitelocation:type'])
+        
+        # Adding field 'SiteLocation.pay_time'
+        db.add_column('localtv_sitelocation', 'pay_time', orm['localtv.sitelocation:pay_time'])
         
     
     
     def backwards(self, orm):
         
-        # Deleting field 'Feed.avoid_frontpage'
-        db.delete_column('localtv_feed', 'avoid_frontpage')
+        # Deleting field 'SiteLocation.type'
+        db.delete_column('localtv_sitelocation', 'type')
+        
+        # Deleting field 'SiteLocation.pay_time'
+        db.delete_column('localtv_sitelocation', 'pay_time')
         
     
     
@@ -126,6 +113,7 @@ class Migration:
             'has_thumbnail': ('django.db.models.fields.BooleanField', [], {'default': 'False', 'blank': 'True'}),
             'id': ('django.db.models.fields.AutoField', [], {'primary_key': 'True'}),
             'logo': ('django.db.models.fields.files.ImageField', [], {'max_length': '100', 'blank': 'True'}),
+            'pay_time': ('django.db.models.fields.DateTimeField', [], {'default': 'datetime.datetime.now'}),
             'playlists_enabled': ('django.db.models.fields.IntegerField', [], {'default': '1'}),
             'screen_all_comments': ('django.db.models.fields.BooleanField', [], {'default': 'True', 'blank': 'True'}),
             'sidebar_html': ('django.db.models.fields.TextField', [], {'blank': 'True'}),
@@ -134,6 +122,7 @@ class Migration:
             'submission_requires_login': ('django.db.models.fields.BooleanField', [], {'default': 'False', 'blank': 'True'}),
             'tagline': ('django.db.models.fields.CharField', [], {'max_length': '250', 'blank': 'True'}),
             'thumbnail_extension': ('django.db.models.fields.CharField', [], {'max_length': '8', 'blank': 'True'}),
+            'type': ('django.db.models.fields.IntegerField', [], {'default': '5'}),
             'use_original_date': ('django.db.models.fields.BooleanField', [], {'default': 'True', 'blank': 'True'})
         },
         'localtv.video': {
