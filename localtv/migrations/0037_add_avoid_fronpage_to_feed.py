@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # This file is part of Miro Community.
 # Copyright (C) 2010 Participatory Culture Foundation
 # 
@@ -15,8 +14,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Miro Community.  If not, see <http://www.gnu.org/licenses/>.
 
-=======
->>>>>>> github/master
 
 from south.db import db
 from django.db import models
