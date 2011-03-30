@@ -40,6 +40,16 @@ def generate_ticket_body(subject_text, body_text, requester_email_text):
     requester.appendChild(doc.createTextNode(requester_email_text))
     ticket.appendChild(requester)
 
+    requester = doc.createElement('group-id')
+    requester.appendChild(doc.createTextNode('86020'))
+    ticket.appendChild(requester)
+
+    if getattr(settings, "ZENDESK_ASSIGN_TO_USER_ID", None):
+        value = getattr(settings, "ZENDESK_ASSIGN_TO_USER_ID")
+        assignee = doc.createElement('assignee-id')
+        assignee.appendChild(doc.createTextNode(unicode(value)))
+        ticket.appendChild(assignee)
+
     description = doc.createElement('description')
     description.appendChild(doc.createTextNode(body_text))
     ticket.appendChild(description)
@@ -60,6 +70,8 @@ def create_ticket(subject, body, requester_email='paulproteus+robot@pculture.org
 
     # Prepare kwargs for HTTP request
     ticket_body_kwargs = {'subject': subject, 'body': body, 'requester_email': requester_email}
+    http_data = dict(headers={'Content-Type': 'application/xml'},
+                     body=(generate_ticket_body(subject_text=subject, body_text=body, requester_email_text=requester_email)))
 
     # If we are inside the test suite, just create an "outbox" and push things onto it
     # Detect the test suite by looking at the email backend
@@ -68,9 +80,7 @@ def create_ticket(subject, body, requester_email='paulproteus+robot@pculture.org
         return True
 
     # Oh, so we're in real mode? Okay, then let's actually do the HTTP game.
-    kwargs = dict(headers={'Content-Type': 'application/xml'},
-                  body=(generate_ticket_body(**ticket_body_kwargs)))
-    response = h.request("http://mirocommunity.zendesk.com/tickets.xml", "POST", **kwargs)
+    response = h.request("http://mirocommunity.zendesk.com/tickets.xml", "POST", **http_data)
     if response[0]['status'] == '201':
         return True
     return False

@@ -316,6 +316,7 @@ class TierInfo(models.Model):
     inactive_site_warning_sent = models.BooleanField(default=False)
     user_has_successfully_performed_a_paypal_transaction = models.BooleanField(default=False)
     already_sent_tiers_compliance_email = models.BooleanField(default=False)
+    fully_confirmed_tier_name = models.CharField(max_length=255, default='', blank=True)
     sitelocation = models.OneToOneField('SiteLocation')
     objects = TierInfoManager()
 
@@ -412,6 +413,16 @@ class SiteLocation(Thumbnailable):
     def __unicode__(self):
         return '%s (%s)' % (self.site.name, self.site.domain)
 
+    def add_queued_mail(self, data):
+        if not hasattr(self, '_queued_mail'):
+            self._queued_mail = []
+        self._queued_mail.append(data)
+
+    def get_queued_mail_destructively(self):
+        ret = getattr(self, '_queued_mail', [])
+        self._queued_mail = []
+        return ret
+
     @staticmethod
     def enforce_tiers(override_setting=None):
         '''If the admin has set LOCALTV_DISABLE_TIERS_ENFORCEMENT to a True value,
@@ -452,12 +463,21 @@ class SiteLocation(Thumbnailable):
     def get_tier(self):
         return localtv.tiers.Tier(self.tier_name)
 
+    def get_fully_confirmed_tier(self):
+        # If we are in a transitional state, then we would have stored
+        # the last fully confirmed tier name in an unusual column.
+        tierdata = TierInfo.objects.get_current()
+        if tierdata.fully_confirmed_tier_name:
+            return localtv.tiers.Tier(tierdata.fully_confirmed_tier_name)
+        return None
+
     def get_css_for_display_if_permitted(self):
         '''This function checks the site tier, and if permitted, returns the
         custom CSS the admin has set.
 
         If that is not permitted, it returns the empty unicode string.'''
-        if self.get_tier().permit_custom_css():
+        if (not self.enforce_tiers() or
+            self.get_tier().permit_custom_css()):
             # Sweet.
             return self.css
         else:
@@ -1516,20 +1536,23 @@ class Video(Thumbnailable, VideoBase):
 
 def video__source_type(self):
     '''This is not a method of the Video so that we can can call it from South.'''
-    if self.search:
-        return u'Search: %s' % self.search
-    elif self.feed:
-        if feed__video_service(self.feed):
+    try:
+        if self.search:
+            return u'Search: %s' % self.search
+        elif self.feed:
+            if feed__video_service(self.feed):
+                return u'User: %s: %s' % (
+                    feed__video_service(self.feed),
+                    self.feed.name)
+            else:
+                return 'Feed: %s' % self.feed.name
+        elif self.video_service_user:
             return u'User: %s: %s' % (
-                feed__video_service(self.feed),
-                self.feed.name)
+                video__video_service(self),
+                self.video_service_user)
         else:
-            return 'Feed: %s' % self.feed.name
-    elif self.video_service_user:
-        return u'User: %s: %s' % (
-            video__video_service(self),
-            self.video_service_user)
-    else:
+            return ''
+    except Feed.DoesNotExist, e:
         return ''
 
 def pre_save_video_set_calculated_source_type(instance, **kwargs):
@@ -1743,6 +1766,8 @@ models.signals.pre_save.connect(localtv.tiers.pre_save_set_payment_due_date,
                                 sender=SiteLocation)
 models.signals.pre_save.connect(localtv.tiers.pre_save_adjust_resource_usage,
                                 sender=SiteLocation)
+models.signals.post_save.connect(localtv.tiers.post_save_send_queued_mail,
+                                 sender=SiteLocation)
 
 def create_original_video(sender, instance=None, created=False, **kwargs):
     if not created:

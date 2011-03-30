@@ -81,7 +81,8 @@ class EditVideoForm(forms.ModelForm):
                 self.instance.save_thumbnail_from_file(thumbnail)
         if 'thumbnail_url' in self.cleaned_data:
             thumbnail_url = self.cleaned_data.pop('thumbnail_url')
-            if thumbnail_url:
+            if (thumbnail_url and not
+                models.Video.objects.get(id=self.instance.id).thumbnail_url == thumbnail_url):
                 self.instance.thumbnail_url = thumbnail_url
                 try:
                     self.instance.save_thumbnail()
@@ -386,9 +387,11 @@ class BulkEditVideoForm(EditVideoForm):
 
         # cache the querysets so that we don't hit the DB for each form
         if self.__class__._categories_queryset is None:
-            self.__class__._categories_queryset = models.Category.objects.filter(site=site)
+            self.__class__._categories_queryset = util.MockQueryset(
+                models.Category.objects.filter(site=site))
         if self.__class__._authors_queryset is None:
-            self.__class__._authors_queryset = User.objects.order_by('username')
+            self.__class__._authors_queryset = util.MockQueryset(
+                User.objects.order_by('username'))
         self.fields['categories'].queryset = \
             self.__class__._categories_queryset
         self.fields['authors'].queryset = \
@@ -473,7 +476,8 @@ class EditSettingsForm(forms.ModelForm):
         forms.ModelForm.__init__(self, *args, **kwargs)
         if self.instance:
             self.initial['title'] = self.instance.site.name
-        if localtv.tiers.Tier.get().permit_custom_css():
+        if (not localtv.models.SiteLocation.objects.get_current().enforce_tiers()
+            or localtv.tiers.Tier.get().permit_custom_css()):
             pass # Sweet, CSS is permitted.
         else:
             # Uh-oh: custom CSS is not permitted!
@@ -496,7 +500,8 @@ class EditSettingsForm(forms.ModelForm):
         css = self.cleaned_data.get('css')
         # Does thes SiteLocation permit CSS modifications? If so,
         # return the data the user inputted.
-        if localtv.tiers.Tier.get().permit_custom_css():
+        if (not localtv.models.SiteLocation.objects.get_current().enforce_tiers() or
+            localtv.tiers.Tier.get().permit_custom_css()):
             return css # no questions asked
 
         # We permit the value if it's the same as self.instance has:
@@ -727,6 +732,9 @@ class AuthorForm(user_profile_forms.ProfileForm):
             self.fields['role'].help_text = message
 
     def clean_role(self):
+        if not localtv.models.SiteLocation.objects.get_current().enforce_tiers():
+            return self.cleaned_data['role']
+
         # If the user tried to create an admin, but the tier does not
         # permit creating another admin, raise an error.
         permitted_admins = localtv.tiers.Tier.get().admins_limit()

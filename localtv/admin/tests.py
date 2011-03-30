@@ -2293,9 +2293,46 @@ class CategoryAdministrationTestCase(AdministrationBaseTestCase):
 # Bulk edit administration tests
 # -----------------------------------------------------------------------------
 
+class BulkEditVideoFormTestCase(BaseTestCase):
+    fixtures = AdministrationBaseTestCase.fixtures + [
+        'feeds', 'videos', 'categories']
+
+    def _form2POST(self, form):
+        POST_data = {}
+        for name, field in form.fields.items():
+            data = form.initial.get(name, field.initial)
+            if callable(data):
+                data = data()
+            if isinstance(data, (list, tuple)):
+                data = [force_unicode(item) for item in data]
+            elif data:
+                data = force_unicode(data)
+            if data:
+                POST_data[form.add_prefix(name)] = data
+        return POST_data
+
+    @mock.patch('localtv.models.Video.save_thumbnail')
+    def test_save_thumbnail_false(self, mock_save_thumbnail):
+        vid = models.Video.objects.exclude(thumbnail_url='')[0]
+        import localtv.admin.forms
+        data = self._form2POST(localtv.admin.forms.EditVideoForm(instance=vid))
+        form = localtv.admin.forms.EditVideoForm(data, instance=vid)
+        self.assertTrue(form.is_valid())
+        form.save()
+        self.assertFalse(mock_save_thumbnail.called)
+
+    @mock.patch('localtv.models.Video.save_thumbnail')
+    def test_save_thumbnail_true(self, mock_save_thumbnail):
+        vid = models.Video.objects.exclude(thumbnail_url='')[0]
+        import localtv.admin.forms
+        data = self._form2POST(localtv.admin.forms.EditVideoForm(instance=vid))
+        data['thumbnail_url'] = 'http://www.google.com/logos/2011/persiannewyear11-hp.jpg'
+        form = localtv.admin.forms.EditVideoForm(data, instance=vid)
+        self.assertTrue(form.is_valid())
+        form.save()
+        self.assertTrue(mock_save_thumbnail.called)
 
 class BulkEditAdministrationTestCase(AdministrationBaseTestCase):
-
     fixtures = AdministrationBaseTestCase.fixtures + [
         'feeds', 'videos', 'categories']
 
@@ -3852,7 +3889,9 @@ class DowngradingDisablesThings(BaseTestCase):
         # Now, make sure that the downgrade helper notices and complains
         self.assertTrue('customtheme' not in
                         localtv.tiers.user_warnings_for_downgrade(new_tier_name='max'))
-        
+
+
+
 class AdminDashboardLoadsWithoutError(BaseTestCase):
     url = reverse('localtv_admin_index')
 
@@ -3869,7 +3908,15 @@ class AdminDashboardLoadsWithoutError(BaseTestCase):
         response = c.get(self.url)
         self.assertStatusCodeEquals(response, 200)
 
-        
+class NoEnforceMode(BaseTestCase):
+    def test_theme_uploading_with_enforcement(self):
+        permit = localtv.tiers.Tier('basic').enforce_permit_custom_template()
+        self.assertFalse(permit)
+
+    @mock.patch('localtv.models.SiteLocation.enforce_tiers', mock.Mock(return_value=False))
+    def test_theme_uploading_without_enforcement(self):
+        permit = localtv.tiers.Tier('basic').enforce_permit_custom_template()
+        self.assertTrue(permit)
 
 class DowngradingSevenAdmins(BaseTestCase):
     fixtures = BaseTestCase.fixtures + ['five_more_admins']
@@ -3960,15 +4007,6 @@ class NightlyTiersEmails(BaseTestCase):
         # Make sure it does not want to send it again
         self.tiers_cmd.handle()
         self.assertEqual(len(mail.outbox), 0)
-
-class EmailSwitchTests(BaseTestCase):
-    fixtures = BaseTestCase.fixtures
-
-    def test(self):
-        self.assertEqual(len(mail.outbox), 0)
-        self.site_location.tier_name = 'max'
-        self.site_location.save()
-        self.assertEqual(len(mail.outbox), 1)
 
 class SendWelcomeEmailTest(BaseTestCase):
     fixtures = BaseTestCase.fixtures
@@ -4093,6 +4131,8 @@ class IpnIntegration(BaseTestCase):
         # Check that we are in a free trial (should be!)
         self.assertTrue(new_tier_info.in_free_trial)
         self.assertFalse(new_tier_info.free_trial_available)
+        message = mail.outbox[0].body
+        self.assertFalse('until midnight on None' in message)
 
         # Now, PayPal sends us the IPN.
         ipn_data = {u'last_name': u'User', u'receiver_email': settings.PAYPAL_RECEIVER_EMAIL, u'residence_country': u'US', u'mc_amount1': u'0.00', u'invoice': u'premium', u'payer_status': u'verified', u'txn_type': u'subscr_signup', u'first_name': u'Test', u'item_name': u'Miro Community subscription (plus)', u'charset': u'windows-1252', u'custom': u'plus for example.com', u'notify_version': u'3.0', u'recurring': u'1', u'test_ipn': u'1', u'business': settings.PAYPAL_RECEIVER_EMAIL, u'payer_id': u'SQRR5KCD7Z266', u'period3': u'1 M', u'period1': u'30 D', u'verify_sign': u'AKcOzwh6cb1eCtGrfvM.18Ri5hWDAWoRIoMoZm39KHDsLIoVZyWJDM7B', u'subscr_id': u'I-MEBGA2YXPNJK', u'amount3': u'15.00', u'amount1': u'0.00', u'mc_amount3': u'15.00', u'mc_currency': u'USD', u'subscr_date': u'12:06:48 Feb 17, 2011 PST', u'payer_email': u'paypal_1297894110_per@s.asheesh.org', u'reattempt': u'1'}
@@ -4213,8 +4253,9 @@ class IpnIntegration(BaseTestCase):
         fresh_site_location = models.SiteLocation.objects.get_current()
         self.assertEqual(fresh_site_location.tier_name, 'premium')
 
-        self.assertEqual(fresh_site_location.tierinfo.current_paypal_profile_id, 'I-MEBGA2YXPNJR') # the new one
-        self.assert_(fresh_site_location.tierinfo.payment_due_date > datetime.datetime(2011, 3, 19, 0, 0, 0))
+        ti = models.TierInfo.objects.get_current()
+        self.assertEqual(ti.current_paypal_profile_id, 'I-MEBGA2YXPNJR') # the new one
+        self.assert_(ti.payment_due_date > datetime.datetime(2011, 3, 19, 0, 0, 0))
         import localtv.zendesk
         self.assertEqual(len([msg for msg in localtv.zendesk.outbox
                               if 'cancel a recurring payment profile' in msg['subject']]), 1)
@@ -4302,7 +4343,7 @@ class TestUpgradePage(BaseTestCase):
     def tearDown(self):
         # Note: none of these tests should cause email to be sent.
         self.assertEqual([],
-                         mail.outbox)
+                         [str(k.body) for k in mail.outbox])
 
     ## assertion helpers
     def _assert_upgrade_extra_payments_always_false(self, response):
@@ -4376,6 +4417,22 @@ class TestUpgradePage(BaseTestCase):
         # in a free trial.
         self.assertFalse(response.context['upgrade_extra_payments']['premium'])
 
+        # Okay, so go through the PayPal dance.
+
+        # First, pretend the user went to the paypal_return view, and adjusted
+        # the tier name, but without actually receiving the IPN.
+        localtv.admin.tiers._paypal_return('premium')
+        self.assertEqual(models.SiteLocation.objects.get_current().tier_name, 'premium')
+        ti = models.TierInfo.objects.get_current()
+        self.assertEqual('plus', ti.fully_confirmed_tier_name)
+        # The tier name is updated, so the backend updates its state.
+        # That means we sent a "Congratulations" email:
+        message, = [str(k.body) for k in mail.outbox]
+        self.assertTrue('Congratulations' in message)
+        mail.outbox = []
+        ti = models.TierInfo.objects.get_current()
+        self.assertTrue(ti.in_free_trial)
+
         # Actually do the upgrade
         self._run_method_from_ipn_integration_test_case('upgrade_between_paid_tiers')
 
@@ -4386,6 +4443,69 @@ class TestUpgradePage(BaseTestCase):
         # old payment.
         sl = models.SiteLocation.objects.get_current()
         self.assertEqual('premium', sl.tier_name)
+        ti = models.TierInfo.objects.get_current()
+        self.assertEqual('', ti.fully_confirmed_tier_name)
+
+        # Now, make sure the backend knows that we are not in a free trial
+        self.assertFalse(ti.in_free_trial)
+
+    def test_upgrade_when_within_a_free_trial_with_super_quick_ipn(self):
+        # We start in 'basic' with a free trial.
+        # The pre-requisite for this test is that we have transitioned into a tier.
+        # So borrow a method from IpnIntegration
+        self._run_method_from_ipn_integration_test_case('test_upgrade_and_submit_ipn_skipping_free_trial_post')
+        mail.outbox = [] # remove "Congratulations" email
+
+        # Sanity-check the free trial state.
+        ti = models.TierInfo.objects.get_current()
+        self.assertFalse(ti.free_trial_available)
+        self.assertTrue(ti.in_free_trial)
+        self.assertTrue(ti.current_paypal_profile_id)
+
+        # We are in 'plus'. Let's consider what happens when
+        # we want to upgrade to 'premium'
+        sl = models.SiteLocation.objects.get_current()
+        self.assertEqual('plus', sl.tier_name)
+
+        c = self._log_in_as_superuser()
+        response = c.get(reverse('localtv_admin_tier'))
+        self.assertFalse(response.context['offer_free_trial'])
+
+        # This should be False because PayPal will not let us substantially
+        # increase a recurring payment amount.
+        self.assertFalse(response.context['can_modify_mapping']['premium'])
+
+        # There should be no upgrade_extra_payments value, because we are
+        # in a free trial.
+        self.assertFalse(response.context['upgrade_extra_payments']['premium'])
+
+        # Okay, so go through the PayPal dance.
+
+        # Actually do the upgrade
+        self._run_method_from_ipn_integration_test_case('upgrade_between_paid_tiers')
+
+        # The above method checks that we successfully send an email to
+        # support@ suggesting that the user cancel the old payment.
+        #
+        # It also simulates a support staff person actually cancelling the
+        # old payment.
+        sl = models.SiteLocation.objects.get_current()
+        self.assertEqual('premium', sl.tier_name)
+        ti = models.TierInfo.objects.get_current()
+        self.assertEqual('', ti.fully_confirmed_tier_name)
+
+        # First, pretend the user went to the paypal_return view, and adjusted
+        # the tier name, but without actually receiving the IPN.
+        localtv.admin.tiers._paypal_return('premium')
+        self.assertEqual(models.SiteLocation.objects.get_current().tier_name, 'premium')
+        ti = models.TierInfo.objects.get_current()
+        self.assertEqual('', ti.fully_confirmed_tier_name)
+        # The tier name was already updated, so the backend need not update its state.
+        # Therefore, we do a "Congratulations" email:
+        self.assertEqual([], mail.outbox)
+
+        # Now, make sure the backend knows that we are not in a free trial
+        self.assertFalse(ti.in_free_trial)
 
     def test_upgrade_from_basic_when_not_within_a_free_trial(self):
         # The pre-requisite for this test is that we have transitioned into a tier.
@@ -4565,3 +4685,13 @@ class TestUpgradePage(BaseTestCase):
         self.assertFalse(ti.in_free_trial)
         self.assertEqual('plus', models.SiteLocation.objects.get_current().tier_name)
 
+class TestFreeTrial(BaseTestCase):
+
+    @mock.patch('localtv.admin.tiers._start_free_trial_for_real')
+    def test_does_nothing_if_already_in_free_trial(self, m):
+        # If we are already in a free trial, then we refuse to continue:
+        ti = models.TierInfo.objects.get_current()
+        ti.in_free_trial = True
+        ti.save()
+        localtv.admin.tiers._start_free_trial_unconfirmed('basic')
+        self.assertFalse(m.called)
