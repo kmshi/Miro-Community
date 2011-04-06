@@ -19,7 +19,7 @@ import datetime
 
 from django.conf import settings
 import django.contrib.auth.models
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMessage, EmailMultiAlternatives
 from django.template import Context, loader
 
 import uploadtemplate.models
@@ -391,6 +391,23 @@ def pre_save_set_payment_due_date(instance, signal, **kwargs):
     current_tier_obj = Tier(current_tier_name)
     new_tier_obj= Tier(new_tier_name)
 
+    # Two cases, here:
+    # 1. The site was created, hoping to be set to a tier, and this is the
+    # IPN event that makes that possible.
+    #
+    # 2. The site has been around a while, and we send an email because it
+    # is an upgrade.
+
+    # Case 1 (this field is set by the site creation scripts)
+    if tier_info.should_send_welcome_email_on_paypal_event:
+        instance.add_queued_mail(
+            ('send_welcome_email_hack', {}))
+        # If we are sending the welcome email now, then we quit here.
+        tier_info.should_send_welcome_email_on_paypal_event = False
+        tier_info.save()
+        return
+
+    # Case 2: Normal operation
     if new_tier_obj.dollar_cost() > current_tier_obj.dollar_cost():
         # Plan to send an email about the transition
         # but leave it queued up in the instance. We will send it post-save.
@@ -406,7 +423,13 @@ def pre_save_set_payment_due_date(instance, signal, **kwargs):
 
 def post_save_send_queued_mail(sender, instance, **kwargs):
     for (args, kwargs) in instance.get_queued_mail_destructively():
-        send_tiers_related_email(*args, **kwargs)
+        ### Epic hack :-(
+        if args == 'send_welcome_email_hack':
+            import localtv.management.commands.send_welcome_email
+            cmd = localtv.management.commands.send_welcome_email.Command()
+            cmd.handle()
+        else:
+            send_tiers_related_email(*args, **kwargs)
 
 def pre_save_adjust_resource_usage(instance, signal, **kwargs):
     import localtv.models
@@ -496,6 +519,60 @@ def send_tiers_related_email(subject, template_name, sitelocation, override_to=N
     from django.conf import settings
     EmailMessage(subject, message, settings.DEFAULT_FROM_EMAIL,
                  recipient_list).send(fail_silently=False)
+
+def send_tiers_related_multipart_email(subject, template_name, sitelocation, override_to=None, extra_context=None, just_rendered_body=False):
+    import localtv.models
+    tier_info = localtv.models.TierInfo.objects.get_current()
+
+    # Send it to the site superuser with the lowest ID
+    first_one = get_main_site_admin()
+    if not first_one:
+        logging.error("Hah, there is no site admin. Screw email.")
+        return
+
+    if not first_one.email:
+        logging.error("Hah, there is a site admin, but that person has no email address set. Email is hopeless.")
+        return
+
+    if tier_info.payment_due_date:
+        next_payment_due_date = tier_info.payment_due_date.strftime('%B %e, %Y')
+    else:
+        next_payment_due_date = None
+
+    # Generate the email
+    t = loader.get_template(template_name)
+    data = {'site': sitelocation.site,
+            'in_free_trial': tier_info.in_free_trial,
+            'tier_obj': sitelocation.get_tier(),
+            'tier_name_capitalized': sitelocation.tier_name.title(),
+            'site_name': sitelocation.site.name or sitelocation.site.domain,
+            'video_count': current_videos_that_count_toward_limit().count(),
+            'short_name': first_one.first_name or first_one.username,
+            'next_payment_due_date': next_payment_due_date,
+            }
+    if extra_context:
+        data.update(extra_context)
+
+    c = Context(data)
+    message = t.render(c)
+    if just_rendered_body:
+        return message
+
+    recipient_list = [first_one.email]
+    if override_to:
+        assert type(override_to) in (list, tuple)
+        recipient_list = override_to
+
+    # So, let's jam the baove text into a multipart email. Soon, we'll render an HTML
+    # version of the same template and stick that into the message.
+    msg = EmailMultiAlternatives(subject, message, settings.DEFAULT_FROM_EMAIL,
+            recipient_list)
+
+    html_t = loader.get_template(template_name.replace('.txt', '.html'))
+    message_html = html_t.render(c)
+    msg.attach_alternative(message_html, "text/html")
+    # FIXME: Attach attachments.
+    msg.send(fail_silently=False)
 
 def get_monthly_amount_of_paypal_subscription(subscription_id):
     import localtv.models
