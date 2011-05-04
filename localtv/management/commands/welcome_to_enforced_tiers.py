@@ -15,22 +15,23 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Miro Community.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys
 import hashlib
 import os.path
-import sys
 import re
+import simplejson
 
 from django.core.management.base import BaseCommand
-import django.template
 from django.conf import settings
+import django.template
 
 import localtv.tiers
 import localtv.models
-import uploadtemplate.models
+
+## This is some horrifying hackish copy-paste between send_one_off_tiers_email
+## and send_tiers_compliance_email.
 
 class Command(BaseCommand):
-    args = '<template_name> <subject>'
-    help = 'Sends a rich text email to the site admin, filling in template content with info from the tiers system'
 
     def _path_to_already_sent_file(self, template_name):
         hashed = hashlib.sha1(template_name).hexdigest()
@@ -48,12 +49,13 @@ class Command(BaseCommand):
         file_obj.close()
 
     def handle(self, *args, **options):
-        if len(args) != 2:
-            print >> sys.stderr, "You have to specify a template name and subject. And that's it."
+        if len(args) != 1:
+            print >> sys.stderr, "You have to specify a template name. And that's it."
             sys.exit(1)
 
         html_template_name = args[0]
-        subject = django.template.Template(args[1]).render(
+        subject_unformatted = 'Important: Changes to {% firstof site.name site.domain %}'
+        subject = django.template.Template(subject_unformatted).render(
                          django.template.Context({'site': localtv.models.SiteLocation.objects.get_current().site}))
 
         if not html_template_name.endswith('.html'):
@@ -67,26 +69,24 @@ class Command(BaseCommand):
 
         sitelocation = localtv.models.SiteLocation.objects.get_current()
 
+        # Check if the site is, for some reason, still in no_enforce mode.
+        # If enforcement is disabled, bail out.
+        if not sitelocation.enforce_tiers():
+            print >> sys.stderr, "Enforcement is disabled. Bailing out now!"
+            return
+
+        if sitelocation.tier_name != 'basic':
+            print >> sys.stderr, "Um um um the site should really be in basic."
+            print >> sys.stderr, "Bailing out."
+            return
+
         if sitelocation.tierinfo.site_is_subsidized():
             print >> sys.stderr, "Seems the site is subsidized. Skipping."
             self.mark_as_sent(html_template_name)
             return
 
         warnings = localtv.tiers.user_warnings_for_downgrade(sitelocation.tier_name)
-        ### Hack
-        ### Override the customtheme warning for this email with custom code
-        if 'customtheme' in warnings:
-            warnings.remove('customtheme')
-        default_non_bundled_themes = uploadtemplate.models.Theme.objects.filter(default=True, bundled=False)
-        if default_non_bundled_themes:
-            warnings.add('customtheme')
-
-        ### Hack
-        ### override the customdomain warning, too
-        if (sitelocation.site.domain
-            and not sitelocation.site.domain.endswith('mirocommunity.org')
-            and not sitelocation.get_tier().permits_custom_domain()):
-            warnings.add('customdomain')
+        # There is no reason to hack these warnings. They are the real deal.
 
         data = {'warnings': warnings}
         data['would_lose_admin_usernames'] = localtv.tiers.push_number_of_admins_down(sitelocation.get_tier().admins_limit())
@@ -106,6 +106,29 @@ class Command(BaseCommand):
                                                          override_text_template=text_template_obj,
                                                          override_html_template=html_template_obj,
                                                          extra_context=data)
+            # Well, there were warnings. That means that, sadly, it is time
+            # to squish the site down to size.
+
+            # Will we unpublish videos? If so, save a quick note about them.
+            new_limit = sitelocation.get_tier().videos_limit()
+            current_count = localtv.tiers.current_videos_that_count_toward_limit(
+                ).count()
+            if current_count <= new_limit:
+                count = 0
+            count = (current_count - new_limit)
+
+            if count > 0:
+                # Okay, so we're going to squish the video count down.
+                disable_these_videos = localtv.tiers.current_videos_that_count_toward_limit().order_by('pk')[:count]
+                disable_these_pks = list(disable_these_videos.values_list('id', flat=True))
+                as_json = simplejson.dumps(disable_these_pks)
+                filename = os.path.join('/var/tmp/', 'videos-disabled-' + hashlib.sha1(sitelocation.site.domain).hexdigest() + '.json')
+                file_obj = open(filename, 'w')
+                file_obj.write(as_json)
+                file_obj.close()
+
+            # Okay. Now actually squish the site down to size.
+            localtv.tiers.pre_save_adjust_resource_usage(sitelocation, signal=None)
 
         else:
             print >> sys.stderr, "This site does not have any warnings, so, like, whatever."

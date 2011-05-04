@@ -138,6 +138,7 @@ def upgrade(request):
     data['offer_free_trial'] = request.tier_info.free_trial_available
     data['skip_paypal'] = getattr(settings, 'LOCALTV_SKIP_PAYPAL', False)
     data['paypal_email_acct'] = getattr(settings, 'PAYPAL_RECEIVER_EMAIL', '')
+    data['tier_to_price'] = localtv.tiers.Tier.NAME_TO_COST()
     if not data['skip_paypal']:
         data['paypal_url'] = get_paypal_form_submission_url()
 
@@ -229,7 +230,8 @@ def ipn_endpoint(request, payment_secret):
     #
     # At this point in processing, the data might be fake. Let's pass it to
     # the django-paypal code and ask it to verify it for us.
-    if payment_secret == request.tier_info.payment_secret:
+    if (payment_secret == request.tier_info.payment_secret or
+        payment_secret == request.tier_info.payment_secret.replace('/', '', 1)):
         response = paypal.standard.ipn.views.ipn(request)
         return response
     return HttpResponseForbidden("You submitted something invalid to this IPN handler.")
